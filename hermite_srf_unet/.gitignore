@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+outputs/
+data/train/
+data/val/
+data/test/
+*.pth
+*.pt
+.DS_Store

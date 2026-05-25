@@ -1,0 +1,76 @@
+project:
+  name: hermite_srf_unet_covid_lung_wounds
+  output_dir: outputs/exp00_unet_baseline
+  seed: 42
+data:
+  root: data
+  train_images: data/train/images
+  train_masks: data/train/masks
+  val_images: data/val/images
+  val_masks: data/val/masks
+  test_images: data/test/images
+  test_masks: data/test/masks
+  image_size:
+  - 256
+  - 256
+  image_mode: rgb
+  segmentation_mode: binary
+  num_classes: 2
+  mask_threshold: 127
+  normalize:
+    mean:
+    - 0.485
+    - 0.456
+    - 0.406
+    std:
+    - 0.229
+    - 0.224
+    - 0.225
+  augment:
+    train: true
+    horizontal_flip: 0.5
+    vertical_flip: 0.0
+    rotation_degrees: 10
+basis:
+  path: assets/hermite_basis/hermite_order2_k7_scale_1.5.pt
+  kernel_size: 7
+  max_order: 2
+  scales:
+  - 1.5
+  include_orders: null
+  normalize: true
+  zero_mean_except_order0: true
+  overwrite: false
+model:
+  name: HermiteSRFUNet
+  in_channels: 3
+  base_channels: 24
+  depth: 4
+  bilinear: false
+  encoder_block: conv
+  decoder_block: conv
+  srf_stages:
+  - 0
+  - 1
+  use_batchnorm: true
+  dropout: 0.0
+train:
+  epochs: 80
+  batch_size: 8
+  num_workers: 2
+  lr: 0.0003
+  weight_decay: 1.0e-05
+  optimizer: adamw
+  loss: bce_dice
+  dice_weight: 0.5
+  amp: true
+  threshold: 0.5
+  save_every: 10
+  early_stopping_patience: 20
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 6
+predict:
+  threshold: 0.5
+  save_overlay: true
