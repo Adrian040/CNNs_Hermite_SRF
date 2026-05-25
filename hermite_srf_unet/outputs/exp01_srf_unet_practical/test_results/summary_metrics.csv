@@ -1,0 +1,2 @@
+dice_data_based,iou_data_based,precision_data_based,recall_data_based,hausdorff_image_mean,hausdorff95_image_mean,n_images
+0.9085305250042578,0.8564518670744748,0.9149615641922276,0.9024242133691409,8.057540413344864,6.568388805545887,17
