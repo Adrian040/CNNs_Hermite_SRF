@@ -1,0 +1,50 @@
+{
+  "meta": [
+    {
+      "a": 0,
+      "b": 0,
+      "order": 0,
+      "sigma": 1.5
+    },
+    {
+      "a": 0,
+      "b": 1,
+      "order": 1,
+      "sigma": 1.5
+    },
+    {
+      "a": 1,
+      "b": 0,
+      "order": 1,
+      "sigma": 1.5
+    },
+    {
+      "a": 0,
+      "b": 2,
+      "order": 2,
+      "sigma": 1.5
+    },
+    {
+      "a": 1,
+      "b": 1,
+      "order": 2,
+      "sigma": 1.5
+    },
+    {
+      "a": 2,
+      "b": 0,
+      "order": 2,
+      "sigma": 1.5
+    }
+  ],
+  "config": {
+    "kernel_size": 7,
+    "max_order": 2,
+    "scales": [
+      1.5
+    ],
+    "include_orders": null,
+    "normalize": true,
+    "zero_mean_except_order0": true
+  }
+}
