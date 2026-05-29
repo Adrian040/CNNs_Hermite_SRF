@@ -12,7 +12,7 @@ from _bootstrap import ROOT  # noqa
 from src.data.dataset import IMG_EXTS, list_images
 from src.models.unet_srf import build_model_from_config
 from src.utils.checkpoints import load_model_weights
-from src.utils.config import load_config
+from src.utils.config import load_class_metadata, load_config
 from src.utils.metrics import logits_to_pred
 from src.utils.visualization import save_mask_png, overlay_mask
 
@@ -62,6 +62,7 @@ def main():
 
     mode = cfg["data"].get("segmentation_mode", "binary")
     ncls = int(cfg["data"].get("num_classes", 2))
+    _, class_colors = load_class_metadata(cfg)
     threshold = float(cfg["predict"].get("threshold", cfg["train"].get("threshold", 0.5)))
 
     for path in tqdm(list_images(args.input_dir), desc="predict"):
@@ -71,10 +72,10 @@ def main():
         pred_img = Image.fromarray((pred if ncls > 2 else pred * 255).astype(np.uint8))
         pred_img = pred_img.resize(orig_size, Image.NEAREST)
         pred_np = (np.array(pred_img) > 0).astype(np.uint8) if ncls <= 2 else np.array(pred_img).astype(np.uint8)
-        save_mask_png(pred_np, mask_dir / f"{path.stem}_pred.png", num_classes=ncls)
+        save_mask_png(pred_np, mask_dir / f"{path.stem}_pred.png", num_classes=ncls, colors=class_colors)
 
         if cfg.get("predict", {}).get("save_overlay", True):
-            ov = overlay_mask(original, pred_np)
+            ov = overlay_mask(original, pred_np, num_classes=ncls, colors=class_colors)
             Image.fromarray((ov * 255).astype(np.uint8)).save(overlay_dir / f"{path.stem}_overlay.png")
 
     print(f"Predicciones guardadas en: {out_dir}")

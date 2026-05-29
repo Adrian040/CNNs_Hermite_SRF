@@ -116,8 +116,14 @@ class SegmentationDataset(Dataset):
             mask_np = (mask_np > self.mask_threshold).astype(np.float32)
             mask_t = torch.from_numpy(mask_np).unsqueeze(0)  # [1,H,W]
         elif self.segmentation_mode == "multiclass":
-            mask_np = mask_np.astype(np.int64)
-            mask_np = np.clip(mask_np, 0, self.num_classes - 1)
+            mask_np = np.rint(mask_np).astype(np.int64)
+            valid = np.isin(mask_np, np.arange(self.num_classes))
+            if not valid.all():
+                bad_values = np.unique(mask_np[~valid])
+                raise ValueError(
+                    f"La mascara {mask_path} contiene clases fuera de rango "
+                    f"0..{self.num_classes - 1}: {bad_values.tolist()}"
+                )
             mask_t = torch.from_numpy(mask_np)  # [H,W]
         else:
             raise ValueError("segmentation_mode debe ser 'binary' o 'multiclass'")

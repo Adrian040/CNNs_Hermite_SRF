@@ -61,6 +61,8 @@ def make_loss(cfg: dict) -> nn.Module:
         return ce
     if loss_name == "dice":
         return dice
+    if loss_name not in {"ce_dice", "cross_entropy_dice", "bce_dice"}:
+        raise ValueError(f"Loss multiclase no soportada: {loss_name}")
     return CombinedLoss(ce, dice, dice_weight=dice_weight)
 
 

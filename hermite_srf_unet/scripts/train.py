@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 
-import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -37,6 +37,20 @@ def make_optimizer(cfg, model):
     if name == "sgd":
         return torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=wd)
     return torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+
+
+def write_history_csv(path: Path, rows: list[dict]) -> None:
+    if not rows:
+        return
+    fieldnames = []
+    for row in rows:
+        for key in row:
+            if key not in fieldnames:
+                fieldnames.append(key)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device, cfg, scaler=None):
@@ -178,8 +192,11 @@ def main():
         }
         history.append(row)
         hist_path = log_dir / "history.csv"
-        pd.DataFrame(history).to_csv(hist_path, index=False)
-        save_training_curves(hist_path, fig_dir / "training_curves.png")
+        write_history_csv(hist_path, history)
+        try:
+            save_training_curves(hist_path, fig_dir / "training_curves.png")
+        except Exception as exc:
+            print(f"No se pudo generar training_curves.png: {exc}")
 
         print(f"Epoch {epoch:03d}/{epochs} | train loss {row['train_loss']:.4f} dice {row['train_dice']:.4f} | val loss {row['val_loss']:.4f} dice {row['val_dice']:.4f}")
 
