@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
 import numpy as np
 import torch
@@ -24,7 +24,7 @@ def find_matching_mask(image_path: Path, mask_dir: Path) -> Path:
         return exact
     candidates = [p for p in mask_dir.iterdir() if p.stem == image_path.stem and p.suffix.lower() in IMG_EXTS]
     if not candidates:
-        raise FileNotFoundError(f"No se encontró máscara para {image_path.name} en {mask_dir}")
+        raise FileNotFoundError(f"No se encontro mascara para {image_path.name} en {mask_dir}")
     return candidates[0]
 
 
@@ -41,6 +41,7 @@ class SegmentationDataset(Dataset):
         mean: Optional[list[float]] = None,
         std: Optional[list[float]] = None,
         augment: bool = False,
+        augmentation_backend: str = "basic",
         horizontal_flip: float = 0.5,
         vertical_flip: float = 0.0,
         rotation_degrees: float = 0.0,
@@ -49,7 +50,7 @@ class SegmentationDataset(Dataset):
         self.masks_dir = Path(masks_dir)
         self.image_paths = list_images(self.images_dir)
         if not self.image_paths:
-            raise FileNotFoundError(f"No hay imágenes en {self.images_dir}")
+            raise FileNotFoundError(f"No hay imagenes en {self.images_dir}")
         self.mask_paths = [find_matching_mask(p, self.masks_dir) for p in self.image_paths]
         self.image_size = tuple(image_size)
         self.segmentation_mode = segmentation_mode.lower()
@@ -59,9 +60,13 @@ class SegmentationDataset(Dataset):
         self.mean = mean or [0.485, 0.456, 0.406]
         self.std = std or [0.229, 0.224, 0.225]
         self.augment = augment
+        self.augmentation_backend = augmentation_backend.lower()
         self.horizontal_flip = float(horizontal_flip)
         self.vertical_flip = float(vertical_flip)
         self.rotation_degrees = float(rotation_degrees)
+        self.albumentations_transform = (
+            self._build_albumentations_transform() if self.augmentation_backend == "albumentations" else None
+        )
 
     def __len__(self) -> int:
         return len(self.image_paths)
@@ -73,8 +78,71 @@ class SegmentationDataset(Dataset):
         return img.convert("RGB")
 
     def _load_mask(self, path: Path) -> Image.Image:
-        # Para máscaras multiclass se asume que los valores de gris son IDs de clase.
+        # Para mascaras multiclass se asume que los valores de gris son IDs de clase.
         return Image.open(path).convert("L")
+
+    def _build_albumentations_transform(self):
+        try:
+            import albumentations as A
+        except Exception as exc:
+            raise ImportError(
+                "Albumentations no esta instalado. Instala requirements.txt o cambia "
+                "data.augment.backend a 'basic'."
+            ) from exc
+
+        h, w = self.image_size
+        if not self.augment:
+            return A.Compose([A.Resize(height=h, width=w)])
+
+        geometric = A.OneOf(
+            [
+                A.ShiftScaleRotate(scale_limit=0.5, rotate_limit=0, shift_limit=0, p=0.1, border_mode=0),
+                A.ShiftScaleRotate(scale_limit=0, rotate_limit=30, shift_limit=0, p=0.1, border_mode=0),
+                A.ShiftScaleRotate(scale_limit=0, rotate_limit=0, shift_limit=0.1, p=0.6, border_mode=0),
+                A.ShiftScaleRotate(scale_limit=0.5, rotate_limit=30, shift_limit=0.1, p=0.2, border_mode=0),
+            ],
+            p=0.9,
+        )
+        quality = A.OneOf(
+            [
+                A.Perspective(p=0.2),
+                A.GaussNoise(p=0.2),
+                A.Sharpen(p=0.2),
+                A.Blur(blur_limit=3, p=0.2),
+                A.MotionBlur(blur_limit=3, p=0.2),
+            ],
+            p=0.5,
+        )
+        color_transforms = []
+        if self.image_mode != "grayscale":
+            color_transforms = [
+                A.OneOf(
+                    [
+                        A.CLAHE(p=0.25),
+                        A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.25),
+                        A.RandomGamma(p=0.25),
+                        A.HueSaturationValue(p=0.25),
+                    ],
+                    p=0.3,
+                )
+            ]
+
+        return A.Compose(
+            [
+                A.Resize(height=h, width=w),
+                A.Rotate(limit=35, p=0.5, border_mode=0),
+                A.OneOf(
+                    [
+                        A.HorizontalFlip(p=0.5),
+                        A.VerticalFlip(p=0.5),
+                    ],
+                    p=0.8,
+                ),
+                geometric,
+                quality,
+                *color_transforms,
+            ]
+        )
 
     def _augment_pair(self, image: Image.Image, mask: Image.Image) -> tuple[Image.Image, Image.Image]:
         if not self.augment:
@@ -97,13 +165,20 @@ class SegmentationDataset(Dataset):
         image = self._load_image(image_path)
         mask = self._load_mask(mask_path)
 
-        # PIL usa size=(W,H); config usa [H,W].
-        h, w = self.image_size
-        image = image.resize((w, h), Image.BILINEAR)
-        mask = mask.resize((w, h), Image.NEAREST)
-        image, mask = self._augment_pair(image, mask)
+        if self.albumentations_transform is not None:
+            transformed = self.albumentations_transform(image=np.array(image), mask=np.array(mask))
+            image_np = transformed["image"]
+            mask_np = transformed["mask"]
+        else:
+            # PIL usa size=(W,H); config usa [H,W].
+            h, w = self.image_size
+            image = image.resize((w, h), Image.BILINEAR)
+            mask = mask.resize((w, h), Image.NEAREST)
+            image, mask = self._augment_pair(image, mask)
+            image_np = np.array(image)
+            mask_np = np.array(mask)
 
-        image_np = np.array(image).astype(np.float32) / 255.0
+        image_np = image_np.astype(np.float32) / 255.0
         if image_np.ndim == 2:
             image_np = image_np[..., None]
         image_t = torch.from_numpy(image_np).permute(2, 0, 1).contiguous()
@@ -111,7 +186,6 @@ class SegmentationDataset(Dataset):
         std = torch.tensor(self.std[: image_t.shape[0]], dtype=torch.float32).view(-1, 1, 1)
         image_t = (image_t - mean) / std
 
-        mask_np = np.array(mask)
         if self.segmentation_mode == "binary":
             mask_np = (mask_np > self.mask_threshold).astype(np.float32)
             mask_t = torch.from_numpy(mask_np).unsqueeze(0)  # [1,H,W]
@@ -152,6 +226,7 @@ def make_dataset_from_config(cfg: dict, split: str) -> SegmentationDataset:
         mean=dcfg.get("normalize", {}).get("mean", [0.485, 0.456, 0.406]),
         std=dcfg.get("normalize", {}).get("std", [0.229, 0.224, 0.225]),
         augment=use_aug,
+        augmentation_backend=aug_cfg.get("backend", "basic"),
         horizontal_flip=float(aug_cfg.get("horizontal_flip", 0.5)),
         vertical_flip=float(aug_cfg.get("vertical_flip", 0.0)),
         rotation_degrees=float(aug_cfg.get("rotation_degrees", 0.0)),

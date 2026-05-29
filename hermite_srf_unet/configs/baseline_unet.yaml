@@ -29,6 +29,7 @@ data:
     - 0.225
   augment:
     train: true
+    backend: albumentations
     horizontal_flip: 0.5
     vertical_flip: 0.0
     rotation_degrees: 10
@@ -64,6 +65,9 @@ train:
   optimizer: adamw
   loss: ce_dice
   dice_weight: 0.5
+  class_weights: auto
+  class_weight_max: 10.0
+  class_weight_power: 0.5
   amp: true
   threshold: 0.5
   save_every: 10

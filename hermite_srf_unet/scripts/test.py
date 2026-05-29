@@ -157,6 +157,7 @@ def main():
         "iou_data_based": data_based["iou"],
         "precision_data_based": data_based["precision"],
         "recall_data_based": data_based["recall"],
+        "macro_excludes_background": True,
         "dice_image_mean": mean(row["dice"] for row in rows),
         "iou_image_mean": mean(row["iou"] for row in rows),
         "precision_image_mean": mean(row["precision"] for row in rows),

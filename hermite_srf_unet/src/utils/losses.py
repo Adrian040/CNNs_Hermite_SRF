@@ -44,9 +44,14 @@ def make_loss(cfg: dict) -> nn.Module:
     mode = cfg["data"].get("segmentation_mode", "binary")
     loss_name = cfg["train"].get("loss", "bce_dice")
     dice_weight = float(cfg["train"].get("dice_weight", 0.5))
+    class_weights = cfg["train"].get("class_weights", None)
 
     if mode == "binary":
-        bce = nn.BCEWithLogitsLoss()
+        pos_weight = cfg["train"].get("pos_weight", None)
+        if pos_weight is None and isinstance(class_weights, list) and len(class_weights) >= 2 and float(class_weights[0]) > 0:
+            pos_weight = float(class_weights[1]) / float(class_weights[0])
+        pos_weight_t = torch.tensor([float(pos_weight)], dtype=torch.float32) if pos_weight is not None else None
+        bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight_t)
         dice = BinaryDiceLoss()
         if loss_name == "bce":
             return bce
@@ -55,7 +60,8 @@ def make_loss(cfg: dict) -> nn.Module:
         return CombinedLoss(bce, dice, dice_weight=dice_weight)
 
     num_classes = int(cfg["data"].get("num_classes", 2))
-    ce = nn.CrossEntropyLoss()
+    weight = torch.tensor(class_weights, dtype=torch.float32) if isinstance(class_weights, list) else None
+    ce = nn.CrossEntropyLoss(weight=weight)
     dice = MulticlassDiceLoss(num_classes=num_classes, include_background=False)
     if loss_name == "ce":
         return ce

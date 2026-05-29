@@ -4,7 +4,9 @@ import argparse
 import csv
 from pathlib import Path
 
+import numpy as np
 import torch
+from PIL import Image
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -53,6 +55,51 @@ def write_history_csv(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
+def estimate_class_weights(train_ds, cfg: dict) -> list[float]:
+    mode = cfg["data"].get("segmentation_mode", "binary")
+    num_classes = int(cfg["data"].get("num_classes", 2))
+    power = float(cfg["train"].get("class_weight_power", 0.5))
+    max_weight = float(cfg["train"].get("class_weight_max", 10.0))
+    counts = np.zeros(max(2, num_classes), dtype=np.float64)
+
+    for mask_path in train_ds.mask_paths:
+        mask = np.array(Image.open(mask_path).convert("L"))
+        if mode == "binary":
+            mask = (mask > int(cfg["data"].get("mask_threshold", 127))).astype(np.int64)
+            counts += np.bincount(mask.ravel(), minlength=2)[:2]
+        else:
+            mask = np.rint(mask).astype(np.int64)
+            valid = np.isin(mask, np.arange(num_classes))
+            if not valid.all():
+                bad_values = np.unique(mask[~valid])
+                raise ValueError(
+                    f"La mascara {mask_path} contiene clases fuera de rango "
+                    f"0..{num_classes - 1}: {bad_values.tolist()}"
+                )
+            counts += np.bincount(mask.ravel(), minlength=num_classes)[:num_classes]
+
+    present = counts > 0
+    weights = np.ones_like(counts, dtype=np.float64)
+    if present.any():
+        freqs = counts[present] / counts[present].sum()
+        median_freq = np.median(freqs)
+        weights[present] = (median_freq / freqs) ** power
+        weights[~present] = 0.0
+    weights = np.clip(weights, 0.0, max_weight)
+    nonzero = weights[weights > 0]
+    if nonzero.size:
+        weights = weights / nonzero.mean()
+    return [float(w) for w in weights]
+
+
+def maybe_configure_class_weights(cfg: dict, train_ds) -> None:
+    requested = cfg["train"].get("class_weights", None)
+    if isinstance(requested, str) and requested.lower() == "auto":
+        weights = estimate_class_weights(train_ds, cfg)
+        cfg["train"]["class_weights"] = weights
+        print("Pesos de clase automaticos para la loss:", ", ".join(f"{w:.4f}" for w in weights))
+
+
 def train_one_epoch(model, loader, criterion, optimizer, device, cfg, scaler=None):
     model.train()
     mode = cfg["data"].get("segmentation_mode", "binary")
@@ -83,6 +130,10 @@ def train_one_epoch(model, loader, criterion, optimizer, device, cfg, scaler=Non
         acc.update(preds, masks.detach())
 
     metrics = acc.compute()
+    for class_row in acc.compute_per_class():
+        class_id = int(class_row["class_id"])
+        for metric_name in ("dice", "iou", "precision", "recall"):
+            metrics[f"{metric_name}_class_{class_id}"] = class_row[metric_name]
     metrics["loss"] = total_loss / len(loader.dataset)
     return metrics
 
@@ -106,6 +157,10 @@ def evaluate(model, loader, criterion, device, cfg):
         acc.update(preds, masks)
 
     metrics = acc.compute()
+    for class_row in acc.compute_per_class():
+        class_id = int(class_row["class_id"])
+        for metric_name in ("dice", "iou", "precision", "recall"):
+            metrics[f"{metric_name}_class_{class_id}"] = class_row[metric_name]
     metrics["loss"] = total_loss / len(loader.dataset)
     return metrics
 
@@ -145,7 +200,8 @@ def main():
     val_loader = DataLoader(val_ds, batch_size=int(cfg["train"].get("batch_size", 8)), shuffle=False, num_workers=int(cfg["train"].get("num_workers", 2)), pin_memory=True)
 
     model = build_model_from_config(cfg).to(device)
-    criterion = make_loss(cfg)
+    maybe_configure_class_weights(cfg, train_ds)
+    criterion = make_loss(cfg).to(device)
     optimizer = make_optimizer(cfg, model)
 
     sch_cfg = cfg["train"].get("scheduler", {})
@@ -189,7 +245,12 @@ def main():
             "val_precision": val_m["precision"],
             "train_recall": train_m["recall"],
             "val_recall": val_m["recall"],
+            "macro_excludes_background": True,
         }
+        for class_id in range(int(cfg["data"].get("num_classes", 2))):
+            for metric_name in ("dice", "iou", "precision", "recall"):
+                row[f"train_{metric_name}_class_{class_id}"] = train_m.get(f"{metric_name}_class_{class_id}")
+                row[f"val_{metric_name}_class_{class_id}"] = val_m.get(f"{metric_name}_class_{class_id}")
         history.append(row)
         hist_path = log_dir / "history.csv"
         write_history_csv(hist_path, history)
