@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import csv
+import contextlib
+import io
 
 import numpy as np
 from PIL import Image
@@ -100,12 +102,15 @@ def class_legend_handles(
 
 
 def require_pyplot():
-    if int(np.__version__.split(".", maxsplit=1)[0]) >= 2:
+    stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(stderr):
+            import matplotlib.pyplot as plt
+    except Exception as exc:
         raise RuntimeError(
-            "Matplotlib/SciPy del entorno parecen incompatibles con NumPy 2.x. "
-            "Reinstala dependencias con requirements.txt, que fija numpy<2.0."
-        )
-    import matplotlib.pyplot as plt
+            "No se pudo importar Matplotlib. En Colab reinicia el runtime despues "
+            "de instalar requirements.txt y vuelve a ejecutar el notebook."
+        ) from exc
 
     return plt
 

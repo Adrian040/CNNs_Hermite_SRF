@@ -1,17 +1,17 @@
 from __future__ import annotations
 
+import contextlib
+import io
+
 import numpy as np
 import torch
 
-if int(np.__version__.split(".", maxsplit=1)[0]) >= 2:
+try:
+    with contextlib.redirect_stderr(io.StringIO()):
+        from scipy.ndimage import binary_erosion, distance_transform_edt
+except Exception:
     binary_erosion = None
     distance_transform_edt = None
-else:
-    try:
-        from scipy.ndimage import binary_erosion, distance_transform_edt
-    except Exception:
-        binary_erosion = None
-        distance_transform_edt = None
 
 
 def logits_to_pred(logits: torch.Tensor, mode: str, threshold: float = 0.5) -> torch.Tensor:

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 import numpy as np
-import pandas as pd
 from PIL import Image
 from tqdm import tqdm
 
@@ -40,7 +40,11 @@ def main():
         })
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(rows).to_csv(out, index=False)
+    if rows:
+        with open(out, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
     print(f"Resumen guardado en: {out}")
 
 
