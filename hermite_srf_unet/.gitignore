@@ -7,3 +7,6 @@ data/val/
 data/test/
 *.pt
 .DS_Store
+data/all_data/
+data/all_data_original/
+data_bckup/

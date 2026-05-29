@@ -42,8 +42,8 @@ def copy_or_convert(src: Path, dst: Path, convert_to_png: bool, is_mask: bool = 
 def main():
     args = parse_args()
     root = Path(args.root)
-    images_dir = root / "all_data" / "images"
-    masks_dir = root / "all_data" / "masks"
+    images_dir = root / "all_data" / "images_lung_seg"
+    masks_dir = root / "all_data" / "masks_lung_seg"
 
     ratios = [args.train, args.val, args.test]
     if abs(sum(ratios) - 1.0) > 1e-6:
