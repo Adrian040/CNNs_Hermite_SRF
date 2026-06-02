@@ -9,9 +9,17 @@ from PIL import Image
 import torch
 
 
-def denormalize(img: torch.Tensor, mean: list[float], std: list[float]) -> np.ndarray:
+# ============================================================
+# IMAGEN
+# ============================================================
+
+def denormalize(
+    img: torch.Tensor,
+    mean: list[float],
+    std: list[float],
+) -> np.ndarray:
     """
-    Convierte una imagen normalizada tipo tensor C,H,W a numpy H,W,C en rango [0, 1].
+    Convierte una imagen normalizada C,H,W a numpy H,W,C en rango [0,1].
     """
 
     img = img.detach().cpu().clone()
@@ -24,100 +32,58 @@ def denormalize(img: torch.Tensor, mean: list[float], std: list[float]) -> np.nd
     return img
 
 
-def mask_to_class_ids(mask: np.ndarray, num_classes: int = 2) -> np.ndarray:
+# ============================================================
+# COLORES DE CLASES
+# ============================================================
+
+def get_class_colors(num_classes: int = 4) -> np.ndarray:
     """
-    Convierte máscaras codificadas como intensidades a IDs de clase.
+    Colores fijos para tus 4 clases:
 
-    Ejemplos:
-    - [0, 1, 2, 3, 4] se queda igual.
-    - [0, 64, 128, 192, 255] se convierte a [0, 1, 2, 3, 4].
-    - [0, 85, 170, 255] se convierte a [0, 1, 2, 3].
-    """
-
-    mask = np.asarray(mask)
-
-    if mask.ndim == 3:
-        # Si viene como RGB, nos quedamos con un canal.
-        # Esto solo funciona si la máscara RGB realmente codifica intensidades iguales por canal.
-        mask = mask[..., 0]
-
-    unique_vals = np.unique(mask)
-
-    # Si ya está en formato de clases, no se modifica
-    if unique_vals.min() >= 0 and unique_vals.max() < num_classes:
-        return mask.astype(np.uint8)
-
-    # Si hay pocos valores únicos, hacemos mapeo directo
-    if len(unique_vals) <= num_classes:
-        remap = {val: idx for idx, val in enumerate(sorted(unique_vals))}
-        out = np.zeros_like(mask, dtype=np.uint8)
-
-        for val, idx in remap.items():
-            out[mask == val] = idx
-
-        return out
-
-    # Si viene en escala 0-255 o similar, cuantizamos
-    mask_float = mask.astype(np.float32)
-    mask_float = mask_float - mask_float.min()
-
-    if mask_float.max() > 0:
-        mask_float = mask_float / mask_float.max()
-
-    out = np.rint(mask_float * (num_classes - 1)).astype(np.uint8)
-    out = np.clip(out, 0, num_classes - 1)
-
-    return out
-
-
-def get_class_colors(num_classes: int = 2) -> np.ndarray:
-    """
-    Define colores fijos para cada clase.
-    La clase 0 se deja negra para fondo.
+        clase 0 -> negro / fondo
+        clase 1 -> rojo
+        clase 2 -> verde
+        clase 3 -> azul
     """
 
-    if num_classes <= 2:
-        colors = np.array(
-            [
-                [0, 0, 0],        # clase 0: fondo
-                [255, 0, 0],      # clase 1
-            ],
-            dtype=np.uint8,
-        )
-    elif num_classes == 5:
-        colors = np.array(
-            [
-                [0, 0, 0],        # clase 0: fondo
-                [255, 0, 0],      # clase 1: rojo
-                [0, 255, 0],      # clase 2: verde
-                [0, 0, 255],      # clase 3: azul
-                [255, 255, 0],    # clase 4: amarillo
-            ],
-            dtype=np.uint8,
-        )
-    else:
-        rng = np.random.default_rng(123)
-        colors = np.zeros((num_classes, 3), dtype=np.uint8)
-        colors[0] = [0, 0, 0]
-        colors[1:] = rng.integers(
-            low=40,
-            high=255,
-            size=(num_classes - 1, 3),
-            dtype=np.uint8,
-        )
+    base_colors = np.array(
+        [
+            [0, 0, 0],        # clase 0: fondo
+            [255, 0, 0],      # clase 1: rojo
+            [0, 255, 0],      # clase 2: verde
+            [0, 0, 255],      # clase 3: azul
+        ],
+        dtype=np.uint8,
+    )
 
-    return colors
+    if num_classes <= 4:
+        return base_colors[:num_classes]
+
+    # Por seguridad, si algún día usas más de 4 clases
+    rng = np.random.default_rng(123)
+    extra = rng.integers(
+        low=40,
+        high=255,
+        size=(num_classes - 4, 3),
+        dtype=np.uint8,
+    )
+
+    return np.vstack([base_colors, extra])
 
 
-def get_discrete_cmap(num_classes: int = 2):
+def get_discrete_cmap(num_classes: int = 4):
     """
-    Devuelve cmap y norm discretos para matplotlib.
-    Útil para usar con imshow(mask, cmap=cmap, norm=norm).
+    Crea un colormap discreto para matplotlib.
+
+    Uso:
+        cmap, norm = get_discrete_cmap(4)
+        plt.imshow(mask, cmap=cmap, norm=norm)
     """
 
     colors = get_class_colors(num_classes).astype(np.float32) / 255.0
 
     cmap = ListedColormap(colors)
+
     norm = BoundaryNorm(
         boundaries=np.arange(-0.5, num_classes + 0.5, 1),
         ncolors=num_classes,
@@ -126,39 +92,78 @@ def get_discrete_cmap(num_classes: int = 2):
     return cmap, norm
 
 
-def colorize_mask(mask: np.ndarray, num_classes: int = 2) -> np.ndarray:
-    """
-    Convierte una máscara de clases a imagen RGB coloreada.
+# ============================================================
+# MÁSCARAS
+# ============================================================
 
-    Entrada esperada:
-    - máscara con clases 0, 1, 2, ...
-    - o máscara con intensidades 0, 64, 128, ...
+def mask_to_class_ids(mask: np.ndarray, num_classes: int = 4) -> np.ndarray:
+    """
+    Asegura que una máscara esté como IDs de clase 0,1,2,3.
+
+    Casos soportados:
+    - máscara H,W ya como 0,1,2,3
+    - máscara RGB con colores negro, rojo, verde, azul
+    """
+
+    mask = np.asarray(mask)
+
+    # Caso RGB
+    if mask.ndim == 3 and mask.shape[-1] == 3:
+        h, w, _ = mask.shape
+        out = np.zeros((h, w), dtype=np.uint8)
+
+        color_to_class = {
+            (0, 0, 0): 0,
+            (255, 0, 0): 1,
+            (0, 255, 0): 2,
+            (0, 0, 255): 3,
+        }
+
+        for color, class_id in color_to_class.items():
+            color_arr = np.array(color, dtype=np.uint8)
+            matches = np.all(mask == color_arr, axis=-1)
+            out[matches] = class_id
+
+        return np.clip(out, 0, num_classes - 1).astype(np.uint8)
+
+    # Caso H,W
+    mask = mask.astype(np.int64)
+
+    # Si ya viene como clases, solo aseguramos rango
+    mask = np.clip(mask, 0, num_classes - 1)
+
+    return mask.astype(np.uint8)
+
+
+def colorize_mask(mask: np.ndarray, num_classes: int = 4) -> np.ndarray:
+    """
+    Convierte una máscara de clases H,W en una imagen RGB coloreada.
     """
 
     mask = mask_to_class_ids(mask, num_classes=num_classes)
+
     colors = get_class_colors(num_classes)
+    color_mask = colors[mask]
 
-    mask = np.clip(mask, 0, num_classes - 1)
-
-    return colors[mask]
+    return color_mask.astype(np.uint8)
 
 
 def save_mask_png(
     mask: np.ndarray,
     path: str | Path,
-    num_classes: int = 2,
+    num_classes: int = 4,
     colorized: bool = False,
 ) -> None:
     """
     Guarda una máscara como PNG.
 
-    Si colorized=False:
-        Guarda la máscara como IDs de clase 0, 1, 2, 3...
-        Esto es mejor para evaluación posterior.
+    colorized=False:
+        Guarda la máscara como IDs 0,1,2,3.
+        Esto es útil para evaluación.
 
-    Si colorized=True:
-        Guarda una imagen RGB coloreada.
-        Esto es mejor para inspección visual.
+    colorized=True:
+        Guarda la máscara coloreada como RGB.
+        Esto es útil para visualización.
     """
 
     path = Path(path)
@@ -177,13 +182,13 @@ def overlay_mask(
     image: np.ndarray,
     mask: np.ndarray,
     alpha: float = 0.35,
-    num_classes: int | None = None,
+    num_classes: int = 4,
 ) -> np.ndarray:
     """
-    Genera overlay de una máscara sobre una imagen.
+    Superpone una máscara multiclase sobre la imagen.
 
-    A diferencia de la versión original, esta función asigna un color distinto
-    a cada clase. La clase 0 se interpreta como fondo y no se pinta.
+    La clase 0 es fondo y no se pinta.
+    Las clases 1,2,3 se pintan con rojo, verde y azul.
     """
 
     img = image.copy()
@@ -196,10 +201,6 @@ def overlay_mask(
     else:
         img = img.astype(np.float32)
 
-    if num_classes is None:
-        num_classes = int(np.max(mask)) + 1
-        num_classes = max(num_classes, 2)
-
     mask = mask_to_class_ids(mask, num_classes=num_classes)
 
     color_mask = colorize_mask(mask, num_classes=num_classes).astype(np.float32) / 255.0
@@ -207,6 +208,7 @@ def overlay_mask(
     out = img.copy()
 
     foreground = mask > 0
+
     out[foreground] = (
         (1 - alpha) * out[foreground]
         + alpha * color_mask[foreground]
@@ -215,7 +217,14 @@ def overlay_mask(
     return np.clip(out, 0, 1)
 
 
-def save_training_curves(history_csv: str | Path, output_path: str | Path) -> None:
+# ============================================================
+# CURVAS DE ENTRENAMIENTO
+# ============================================================
+
+def save_training_curves(
+    history_csv: str | Path,
+    output_path: str | Path,
+) -> None:
     import pandas as pd
 
     df = pd.read_csv(history_csv)
@@ -224,24 +233,51 @@ def save_training_curves(history_csv: str | Path, output_path: str | Path) -> No
 
     ax1.set_xlabel("Época")
     ax1.set_ylabel("Dice")
-    ax1.plot(df["epoch"], df["val_dice"], label="Val Dice")
+
+    ax1.plot(
+        df["epoch"],
+        df["val_dice"],
+        label="Val Dice",
+    )
 
     if "train_dice" in df.columns:
-        ax1.plot(df["epoch"], df["train_dice"], linestyle="--", label="Train Dice")
+        ax1.plot(
+            df["epoch"],
+            df["train_dice"],
+            linestyle="--",
+            label="Train Dice",
+        )
 
     ax1.tick_params(axis="y")
     ax1.set_ylim(0, 1.05)
 
     ax2 = ax1.twinx()
     ax2.set_ylabel("Loss")
-    ax2.plot(df["epoch"], df["train_loss"], label="Train Loss")
-    ax2.plot(df["epoch"], df["val_loss"], linestyle="--", label="Val Loss")
+
+    ax2.plot(
+        df["epoch"],
+        df["train_loss"],
+        label="Train Loss",
+    )
+
+    ax2.plot(
+        df["epoch"],
+        df["val_loss"],
+        linestyle="--",
+        label="Val Loss",
+    )
+
     ax2.tick_params(axis="y")
 
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
 
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc="center right")
+    ax1.legend(
+        lines1 + lines2,
+        labels1 + labels2,
+        loc="center right",
+    )
+
     ax1.grid(True, alpha=0.3)
 
     fig.tight_layout()
@@ -249,5 +285,10 @@ def save_training_curves(history_csv: str | Path, output_path: str | Path) -> No
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    fig.savefig(
+        output_path,
+        dpi=200,
+        bbox_inches="tight",
+    )
+
     plt.close(fig)
