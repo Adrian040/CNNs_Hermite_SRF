@@ -2,8 +2,5 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 outputs/*exp*/checkpoints/checkpoint_*
-data/train/
-data/val/
-data/test/
 *.pt
 .DS_Store
