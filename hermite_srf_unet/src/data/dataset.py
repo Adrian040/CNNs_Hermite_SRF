@@ -67,7 +67,21 @@ def find_matching_mask(image_path: Path, mask_dir: Path) -> Path:
 # CONVERSIÓN DE MÁSCARAS RGB A CLASES
 # ============================================================
 
-def rgb_mask_to_class_ids(mask: Image.Image) -> np.ndarray:
+CLASS_COLOR_TO_ID = {
+    (0, 0, 0): 0,        # fondo
+    (255, 0, 0): 1,      # rojo
+    (0, 255, 0): 2,      # verde
+    (0, 0, 255): 3,      # azul
+}
+
+
+def _format_unique_values(values: np.ndarray, max_items: int = 12) -> str:
+    vals = values[:max_items].tolist()
+    suffix = "..." if len(values) > max_items else ""
+    return f"{vals}{suffix}"
+
+
+def mask_to_class_ids(mask: Image.Image, num_classes: int = 4) -> np.ndarray:
     """
     Convierte una máscara RGB coloreada a IDs de clase.
 
@@ -87,24 +101,59 @@ def rgb_mask_to_class_ids(mask: Image.Image) -> np.ndarray:
         0, 1, 2, 3
     """
 
+    if num_classes != 4:
+        raise ValueError(
+            "Estas máscaras usan 4 clases contando fondo: "
+            f"0=fondo, 1=rojo, 2=verde, 3=azul. num_classes={num_classes}."
+        )
+
+    arr = np.array(mask)
+
+    # En modo P los valores H,W son índices de paleta, no necesariamente IDs.
+    # Convertimos a RGB para respetar los colores reales de la anotación.
+    if arr.ndim == 2 and mask.mode != "P":
+        unique = np.unique(arr)
+        if np.all((0 <= unique) & (unique < num_classes)):
+            return arr.astype(np.int64)
+
+        raise ValueError(
+            "Máscara en escala de grises con valores fuera de 0..3. "
+            f"Valores encontrados: {_format_unique_values(unique)}. "
+            "Para multiclase usa IDs 0,1,2,3 o colores RGB exactos "
+            "negro/rojo/verde/azul."
+        )
+
     mask_rgb = np.array(mask.convert("RGB"))
 
     h, w, _ = mask_rgb.shape
     out = np.zeros((h, w), dtype=np.int64)
 
-    color_to_class = {
-        (0, 0, 0): 0,        # fondo
-        (255, 0, 0): 1,      # rojo
-        (0, 255, 0): 2,      # verde
-        (0, 0, 255): 3,      # azul
-    }
+    known = np.zeros((h, w), dtype=bool)
 
-    for color, class_id in color_to_class.items():
+    for color, class_id in CLASS_COLOR_TO_ID.items():
         color_arr = np.array(color, dtype=np.uint8)
         matches = np.all(mask_rgb == color_arr, axis=-1)
         out[matches] = class_id
+        known |= matches
+
+    if not np.all(known):
+        unknown = np.unique(mask_rgb[~known].reshape(-1, 3), axis=0)
+        unknown_colors = [tuple(int(x) for x in c) for c in unknown[:12]]
+        suffix = "..." if len(unknown) > 12 else ""
+        raise ValueError(
+            "La máscara contiene colores que no corresponden a ninguna clase. "
+            f"Colores desconocidos: {unknown_colors}{suffix}. "
+            "Usa exactamente negro=(0,0,0), rojo=(255,0,0), "
+            "verde=(0,255,0), azul=(0,0,255)."
+        )
 
     return out
+
+
+def rgb_mask_to_class_ids(mask: Image.Image) -> np.ndarray:
+    """Alias conservado para compatibilidad con código existente."""
+
+    return mask_to_class_ids(mask, num_classes=4)
 
 
 def print_mask_rgb_info(mask: Image.Image, name: str = "") -> None:
@@ -177,9 +226,9 @@ class SegmentationDataset(Dataset):
             raise ValueError("segmentation_mode debe ser 'binary' o 'multiclass'")
 
         if self.segmentation_mode == "multiclass" and self.num_classes != 4:
-            print(
-                "\nADVERTENCIA: tus máscaras RGB parecen tener 4 clases contando fondo. "
-                f"Actualmente num_classes={self.num_classes}."
+            raise ValueError(
+                "Para estas máscaras multiclase, num_classes debe ser 4: "
+                "clase 0=fondo, clase 1=rojo, clase 2=verde, clase 3=azul."
             )
 
     def __len__(self) -> int:
@@ -204,7 +253,7 @@ class SegmentationDataset(Dataset):
         Si haces convert("L"), se pierde la codificación de clases.
         """
 
-        return Image.open(path).convert("RGB")
+        return Image.open(path)
 
     def _augment_pair(
         self,
@@ -290,10 +339,7 @@ class SegmentationDataset(Dataset):
             mask_t = torch.from_numpy(mask_np).unsqueeze(0)
 
         elif self.segmentation_mode == "multiclass":
-            mask_np = rgb_mask_to_class_ids(mask)
-
-            # Seguridad: restringir al rango válido 0,1,2,3
-            mask_np = np.clip(mask_np, 0, self.num_classes - 1)
+            mask_np = mask_to_class_ids(mask, num_classes=self.num_classes)
 
             # Para CrossEntropyLoss, la máscara debe ser LongTensor H,W
             mask_t = torch.from_numpy(mask_np.astype(np.int64))

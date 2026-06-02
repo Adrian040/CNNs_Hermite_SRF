@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 
-import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -18,6 +18,15 @@ from src.utils.losses import make_loss
 from src.utils.metrics import MetricAccumulator, logits_to_pred
 from src.utils.seed import set_seed
 from src.utils.visualization import save_training_curves
+
+
+def write_rows_csv(path: Path, rows: list[dict]) -> None:
+    if not rows:
+        return
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def parse_args():
@@ -178,7 +187,7 @@ def main():
         }
         history.append(row)
         hist_path = log_dir / "history.csv"
-        pd.DataFrame(history).to_csv(hist_path, index=False)
+        write_rows_csv(hist_path, history)
         save_training_curves(hist_path, fig_dir / "training_curves.png")
 
         print(f"Epoch {epoch:03d}/{epochs} | train loss {row['train_loss']:.4f} dice {row['train_dice']:.4f} | val loss {row['val_loss']:.4f} dice {row['val_dice']:.4f}")

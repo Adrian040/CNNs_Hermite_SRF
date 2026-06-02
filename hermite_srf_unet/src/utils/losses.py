@@ -41,8 +41,8 @@ class MulticlassDiceLoss(nn.Module):
 
 
 def make_loss(cfg: dict) -> nn.Module:
-    mode = cfg["data"].get("segmentation_mode", "binary")
-    loss_name = cfg["train"].get("loss", "bce_dice")
+    mode = cfg["data"].get("segmentation_mode", "binary").lower()
+    loss_name = cfg["train"].get("loss", "bce_dice").lower()
     dice_weight = float(cfg["train"].get("dice_weight", 0.5))
 
     if mode == "binary":
@@ -57,11 +57,20 @@ def make_loss(cfg: dict) -> nn.Module:
     num_classes = int(cfg["data"].get("num_classes", 2))
     ce = nn.CrossEntropyLoss()
     dice = MulticlassDiceLoss(num_classes=num_classes, include_background=False)
-    if loss_name == "ce":
+    if loss_name in {"ce", "cross_entropy"}:
         return ce
     if loss_name == "dice":
         return dice
-    return CombinedLoss(ce, dice, dice_weight=dice_weight)
+    if loss_name in {"ce_dice", "cross_entropy_dice", "bce_dice"}:
+        if loss_name == "bce_dice":
+            print(
+                "ADVERTENCIA: loss=bce_dice es una opción binaria; "
+                "en multiclase se usará CrossEntropy + Dice."
+            )
+        return CombinedLoss(ce, dice, dice_weight=dice_weight)
+    raise ValueError(
+        "Pérdida multiclase no soportada. Usa 'ce', 'dice' o 'ce_dice'."
+    )
 
 
 class CombinedLoss(nn.Module):

@@ -3,9 +3,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from PIL import Image, ImageDraw
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -15,7 +15,7 @@ from src.models.unet_srf import build_model_from_config
 from src.utils.checkpoints import load_model_weights
 from src.utils.config import load_config
 from src.utils.metrics import logits_to_pred
-from src.utils.visualization import denormalize, overlay_mask
+from src.utils.visualization import colorize_mask, denormalize, overlay_mask
 
 
 def parse_args():
@@ -26,6 +26,34 @@ def parse_args():
     p.add_argument("--num-samples", type=int, default=12)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()
+
+
+def panel_with_title(array: np.ndarray, title: str, width: int = 256) -> Image.Image:
+    if array.dtype != np.uint8:
+        array = (np.clip(array, 0, 1) * 255).astype(np.uint8)
+    img = Image.fromarray(array).convert("RGB")
+    if img.width != width:
+        height = max(1, round(img.height * width / img.width))
+        img = img.resize((width, height), Image.Resampling.NEAREST)
+
+    title_h = 28
+    panel = Image.new("RGB", (img.width, img.height + title_h), "white")
+    panel.paste(img, (0, title_h))
+    draw = ImageDraw.Draw(panel)
+    draw.text((8, 7), title, fill=(0, 0, 0))
+    return panel
+
+
+def save_visualization_grid(path: Path, panels: list[Image.Image]) -> None:
+    gap = 8
+    width = sum(panel.width for panel in panels) + gap * (len(panels) - 1)
+    height = max(panel.height for panel in panels)
+    canvas = Image.new("RGB", (width, height), "white")
+    x = 0
+    for panel in panels:
+        canvas.paste(panel, (x, 0))
+        x += panel.width + gap
+    canvas.save(path)
 
 
 @torch.no_grad()
@@ -90,20 +118,21 @@ def main():
             for cls_id, count in enumerate(pred_counts.tolist()):
                 print(f"  clase {cls_id}: {count}")
 
-        fig, axes = plt.subplots(1, 4, figsize=(14, 4))
-        axes[0].imshow(image)
-        axes[0].set_title("Imagen")
-        axes[1].imshow(gt, cmap="gray", vmin=0, vmax=max(1, ncls - 1))
-        axes[1].set_title("Ground Truth")
-        axes[2].imshow(pred, cmap="gray", vmin=0, vmax=max(1, ncls - 1))
-        axes[2].set_title("Predicción")
-        axes[3].imshow(overlay_mask(image, pred))
-        axes[3].set_title("Overlay")
-        for ax in axes:
-            ax.axis("off")
-        fig.tight_layout()
-        fig.savefig(out_dir / f"{batch['name'][0]}_viz.png", dpi=200)
-        plt.close(fig)
+        if mode == "multiclass":
+            gt_view = colorize_mask(gt, num_classes=ncls)
+            pred_view = colorize_mask(pred, num_classes=ncls)
+        else:
+            gt_view = np.stack([gt * 255] * 3, axis=-1).astype(np.uint8)
+            pred_view = np.stack([pred * 255] * 3, axis=-1).astype(np.uint8)
+
+        overlay = overlay_mask(image, pred, num_classes=ncls)
+        panels = [
+            panel_with_title(image, "Imagen"),
+            panel_with_title(gt_view, "Ground Truth"),
+            panel_with_title(pred_view, "Predicción"),
+            panel_with_title(overlay, "Overlay"),
+        ]
+        save_visualization_grid(out_dir / f"{batch['name'][0]}_viz.png", panels)
 
     print(f"Visualizaciones guardadas en: {out_dir}")
 

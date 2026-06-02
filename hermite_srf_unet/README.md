@@ -139,7 +139,11 @@ segmentation_mode: multiclass
 num_classes: 4
 ```
 
-En multiclase, las máscaras deben estar codificadas como enteros `0, 1, ..., C-1` en escala de grises.
+En multiclase, las máscaras pueden estar codificadas como enteros `0, 1, ..., C-1`
+en escala de grises o como RGB con esta paleta exacta:
+`negro=(0,0,0)` para fondo, `rojo=(255,0,0)` para clase 1,
+`verde=(0,255,0)` para clase 2 y `azul=(0,0,255)` para clase 3.
+Por eso `num_classes: 4` cuenta el fondo más las tres clases anotadas.
 
 ## Cambiar entre U-Net normal y Hermite-SRF
 

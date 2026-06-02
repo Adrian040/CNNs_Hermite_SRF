@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -16,6 +16,22 @@ from src.utils.checkpoints import load_model_weights
 from src.utils.config import load_config
 from src.utils.metrics import MetricAccumulator, logits_to_pred, per_image_metrics
 from src.utils.visualization import save_mask_png
+
+
+def write_rows_csv(path: Path, rows: list[dict]) -> None:
+    if not rows:
+        return
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def mean_skipna(values: list[float]) -> float:
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.size == 0 or np.all(np.isnan(arr)):
+        return float("nan")
+    return float(np.nanmean(arr))
 
 
 def parse_args():
@@ -49,8 +65,10 @@ def main():
     rows = []
 
     pred_dir = out_dir / "predicted_masks"
+    color_pred_dir = out_dir / "predicted_masks_colorized"
     if args.save_preds:
         pred_dir.mkdir(exist_ok=True)
+        color_pred_dir.mkdir(exist_ok=True)
 
     for batch in tqdm(loader, desc="test"):
         images = batch["image"].to(device)
@@ -70,9 +88,14 @@ def main():
         rows.append(row)
         if args.save_preds:
             save_mask_png(pred_np, pred_dir / f"{batch['name'][0]}_pred.png", num_classes=ncls)
+            save_mask_png(
+                pred_np,
+                color_pred_dir / f"{batch['name'][0]}_pred_color.png",
+                num_classes=ncls,
+                colorized=True,
+            )
 
-    df = pd.DataFrame(rows)
-    df.to_csv(out_dir / "per_image_metrics.csv", index=False)
+    write_rows_csv(out_dir / "per_image_metrics.csv", rows)
 
     data_based = acc.compute()
     summary = {
@@ -80,11 +103,11 @@ def main():
         "iou_data_based": data_based["iou"],
         "precision_data_based": data_based["precision"],
         "recall_data_based": data_based["recall"],
-        "hausdorff_image_mean": float(df["hausdorff"].mean(skipna=True)),
-        "hausdorff95_image_mean": float(df["hausdorff95"].mean(skipna=True)),
-        "n_images": len(df),
+        "hausdorff_image_mean": mean_skipna([row["hausdorff"] for row in rows]),
+        "hausdorff95_image_mean": mean_skipna([row["hausdorff95"] for row in rows]),
+        "n_images": len(rows),
     }
-    pd.DataFrame([summary]).to_csv(out_dir / "summary_metrics.csv", index=False)
+    write_rows_csv(out_dir / "summary_metrics.csv", [summary])
 
     print("Métricas finales:")
     for k, v in summary.items():

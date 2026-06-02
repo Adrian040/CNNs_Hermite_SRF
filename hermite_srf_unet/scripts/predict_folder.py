@@ -51,8 +51,10 @@ def main():
     device = args.device
     out_dir = Path(args.output_dir)
     mask_dir = out_dir / "masks"
+    color_mask_dir = out_dir / "masks_colorized"
     overlay_dir = out_dir / "overlays"
     mask_dir.mkdir(parents=True, exist_ok=True)
+    color_mask_dir.mkdir(parents=True, exist_ok=True)
     if cfg.get("predict", {}).get("save_overlay", True):
         overlay_dir.mkdir(parents=True, exist_ok=True)
 
@@ -72,9 +74,15 @@ def main():
         pred_img = pred_img.resize(orig_size, Image.NEAREST)
         pred_np = (np.array(pred_img) > 0).astype(np.uint8) if ncls <= 2 else np.array(pred_img).astype(np.uint8)
         save_mask_png(pred_np, mask_dir / f"{path.stem}_pred.png", num_classes=ncls)
+        save_mask_png(
+            pred_np,
+            color_mask_dir / f"{path.stem}_pred_color.png",
+            num_classes=ncls,
+            colorized=True,
+        )
 
         if cfg.get("predict", {}).get("save_overlay", True):
-            ov = overlay_mask(original, pred_np)
+            ov = overlay_mask(original, pred_np, num_classes=ncls)
             Image.fromarray((ov * 255).astype(np.uint8)).save(overlay_dir / f"{path.stem}_overlay.png")
 
     print(f"Predicciones guardadas en: {out_dir}")

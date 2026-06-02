@@ -3,10 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap, BoundaryNorm
 from PIL import Image
 import torch
+
+
+CLASS_COLOR_TO_ID = {
+    (0, 0, 0): 0,
+    (255, 0, 0): 1,
+    (0, 255, 0): 2,
+    (0, 0, 255): 3,
+}
 
 
 # ============================================================
@@ -80,6 +86,8 @@ def get_discrete_cmap(num_classes: int = 4):
         plt.imshow(mask, cmap=cmap, norm=norm)
     """
 
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+
     colors = get_class_colors(num_classes).astype(np.float32) / 255.0
 
     cmap = ListedColormap(colors)
@@ -112,25 +120,34 @@ def mask_to_class_ids(mask: np.ndarray, num_classes: int = 4) -> np.ndarray:
         h, w, _ = mask.shape
         out = np.zeros((h, w), dtype=np.uint8)
 
-        color_to_class = {
-            (0, 0, 0): 0,
-            (255, 0, 0): 1,
-            (0, 255, 0): 2,
-            (0, 0, 255): 3,
-        }
-
-        for color, class_id in color_to_class.items():
+        known = np.zeros((h, w), dtype=bool)
+        for color, class_id in CLASS_COLOR_TO_ID.items():
             color_arr = np.array(color, dtype=np.uint8)
             matches = np.all(mask == color_arr, axis=-1)
             out[matches] = class_id
+            known |= matches
+
+        if not np.all(known):
+            unknown = np.unique(mask[~known].reshape(-1, 3), axis=0)
+            unknown_colors = [tuple(int(x) for x in c) for c in unknown[:12]]
+            suffix = "..." if len(unknown) > 12 else ""
+            raise ValueError(
+                "La máscara RGB contiene colores fuera de la paleta esperada: "
+                f"{unknown_colors}{suffix}"
+            )
 
         return np.clip(out, 0, num_classes - 1).astype(np.uint8)
 
     # Caso H,W
     mask = mask.astype(np.int64)
 
-    # Si ya viene como clases, solo aseguramos rango
-    mask = np.clip(mask, 0, num_classes - 1)
+    invalid = (mask < 0) | (mask >= num_classes)
+    if np.any(invalid):
+        values = np.unique(mask[invalid])
+        raise ValueError(
+            f"La máscara contiene IDs fuera de 0..{num_classes - 1}: "
+            f"{values[:12].tolist()}"
+        )
 
     return mask.astype(np.uint8)
 
@@ -225,9 +242,21 @@ def save_training_curves(
     history_csv: str | Path,
     output_path: str | Path,
 ) -> None:
-    import pandas as pd
+    import csv
 
-    df = pd.read_csv(history_csv)
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print(f"No se pudieron guardar curvas de entrenamiento: matplotlib no está disponible ({exc}).")
+        return
+
+    with Path(history_csv).open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+
+    epochs = [int(row["epoch"]) for row in rows]
+    val_dice = [float(row["val_dice"]) for row in rows]
+    train_loss = [float(row["train_loss"]) for row in rows]
+    val_loss = [float(row["val_loss"]) for row in rows]
 
     fig, ax1 = plt.subplots(figsize=(9, 5))
 
@@ -235,15 +264,16 @@ def save_training_curves(
     ax1.set_ylabel("Dice")
 
     ax1.plot(
-        df["epoch"],
-        df["val_dice"],
+        epochs,
+        val_dice,
         label="Val Dice",
     )
 
-    if "train_dice" in df.columns:
+    if rows and "train_dice" in rows[0]:
+        train_dice = [float(row["train_dice"]) for row in rows]
         ax1.plot(
-            df["epoch"],
-            df["train_dice"],
+            epochs,
+            train_dice,
             linestyle="--",
             label="Train Dice",
         )
@@ -255,14 +285,14 @@ def save_training_curves(
     ax2.set_ylabel("Loss")
 
     ax2.plot(
-        df["epoch"],
-        df["train_loss"],
+        epochs,
+        train_loss,
         label="Train Loss",
     )
 
     ax2.plot(
-        df["epoch"],
-        df["val_loss"],
+        epochs,
+        val_loss,
         linestyle="--",
         label="Val Loss",
     )
