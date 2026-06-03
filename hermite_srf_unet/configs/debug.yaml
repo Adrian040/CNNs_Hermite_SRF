@@ -14,8 +14,9 @@ data:
   - 64
   - 64
   image_mode: rgb
-  segmentation_mode: binary
-  num_classes: 2
+  segmentation_mode: multiclass
+  num_classes: 4
+  class_labels_path: configs/class_labels.yaml
   mask_threshold: 127
   normalize:
     mean:
@@ -28,6 +29,7 @@ data:
     - 0.225
   augment:
     train: true
+    backend: albumentations
     horizontal_flip: 0.5
     vertical_flip: 0.0
     rotation_degrees: 10
@@ -60,8 +62,11 @@ train:
   lr: 0.0003
   weight_decay: 1.0e-05
   optimizer: adamw
-  loss: bce_dice
+  loss: ce_dice
   dice_weight: 0.5
+  class_weights: auto
+  class_weight_max: 10.0
+  class_weight_power: 0.5
   amp: true
   threshold: 0.5
   save_every: 10
